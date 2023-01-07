@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <dirent.h>
 
 
 mtx_t mutex;
@@ -32,7 +33,7 @@ typedef struct queue {
 } Queue;
 
 int queue_init(Queue* q, size_t capacity) {
-    q->arr = malloc(capacity * sizeof(Path));
+    q->arr = malloc(capacity * sizeof(char) * PATH_MAX);
     if (q->arr == NULL) {
         return -1;
     }
@@ -63,7 +64,7 @@ int queue_enqueue(Queue* q, Path item) {
     while (queue_is_full(q)) {
         cnd_wait(&q->cond, &q->lock);
     }
-    q->arr[q->rear] = item;
+    q->arr[q->rear] = strdup(item);
     q->size++;
 //    Update rear after the enqueueing. Circular queue - So if we add to the end of `arr`, new rear is start of `arr`
     q->rear = (q->rear + 1) % q->capacity;
@@ -81,8 +82,10 @@ Path queue_dequeue(Queue* q) {
 //        If the number of waiting threads is `number_of_desired_threads`, that means that every thread got to
 //        waiting_threads++, But no thread got to waiting_threads--. This means that all thread except this one are
 //        waiting, and because the queue is empty, that means I'm going to be waiting too, for no one. So we are done.
-        if(waiting_threads == number_of_desired_threads)
+        if(waiting_threads == number_of_desired_threads) {
+            printf("Done searching, found %lu files\n", files_found);
             exit(is_any_errors);
+        }
         cnd_wait(&q->cond, &q->lock);
         waiting_threads--;
     }
@@ -92,7 +95,7 @@ Path queue_dequeue(Queue* q) {
     q->front = (q->front + 1) % q->capacity;
     cnd_signal(&q->cond);
     mtx_unlock(&q->lock);
-    return item;
+    return strdup(item);
 }
 
 int queue_free(Queue* q) {
@@ -134,8 +137,25 @@ bool is_file_match(FilePath path){
     return strstr(base, search_term) != NULL;
 }
 
-void process_directory(Path dir_path) {
-//    TODO - fill
+void process_directory(Path dir_path, Queue* q) {
+    // Open the directory specified by the path
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        fprintf(stderr, "Directory %s: opendir failed.\n", dir_path);
+        is_any_errors = true;
+        return;
+    }
+
+    // Read the entries in the directory one by one
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            char full_path[PATH_MAX];
+            sprintf(full_path, "%s/%s", dir_path, entry->d_name);
+            queue_enqueue(q, full_path);
+        }
+    }
+    closedir(dir);
 }
 
 typedef struct thread_parameters {
@@ -149,17 +169,18 @@ int handle_single_path_item(Queue *arg) {
 //    TODO - This is bad. try to avoid while true.
     while(true) {
         item = queue_dequeue(queue);
-        printf("Someone got %s from the queue\n", item);
         if (is_directory(item)) {
             if (is_directory_searchable(item)) {
-                process_directory(item);
+                process_directory(item, queue);
             } else {
                 fprintf(stderr, "Directory %s: Permission denied.\n", item);
                 is_any_errors = true;
             }
         } else {
+//            It's a file
             if (is_file_match(item)) {
                 files_found++;
+                printf("%s\n", item);
             }
         }
     }
@@ -195,7 +216,7 @@ int main(int argc, char* argv[]) {
     number_of_desired_threads = atoi(argv[3]);
 
     Queue q;
-    int queue_size = 11;
+    int queue_size = 1000;
     queue_init(&q, queue_size);
 
     thrd_t threads[number_of_desired_threads];
@@ -213,8 +234,8 @@ int main(int argc, char* argv[]) {
         thread_params->q = &q;
 
         if (thrd_create(&threads[i], (thrd_start_t) thread_func, thread_params) != thrd_success) {
-            fprintf(stderr, "Error creating thread\n");
-            return -1;
+            fprintf(stderr, "Error creating thread %d\n", i);
+            return 1;
         }
     }
 
