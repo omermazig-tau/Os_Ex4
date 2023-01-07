@@ -1,12 +1,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <threads.h>
+#include <unistd.h>
+
 
 mtx_t mutex;
 cnd_t condition;
 cnd_t is_all_threads_ready;
 long number_of_ready_threads = 0;
-long number_of_desired_threads = 20;
+long number_of_desired_threads;
+
 
 typedef struct queue {
     int* arr;
@@ -86,21 +89,14 @@ typedef struct thread_parameters {
     Queue* q;
 } ThreadParams;
 
-int producer(Queue *arg) {
-    Queue* queue = arg;
-    for (int i = 0; i < 100; i++) {
-        queue_enqueue(queue, i);
-        printf("Produced: %d\n", i);
-    }
-    return 0;
-}
-
-int consumer(Queue *arg) {
+int handle_single_queue_item(Queue *arg) {
     Queue* queue = arg;
     int item;
-    for (int i = 0; i < 100; i++) {
-        item = queue_dequeue(queue);
-        printf("Consumed: %d\n", item);
+    item = queue_dequeue(queue);
+    printf("Someone got %d from the queue\n", item);
+    for (int i = 2; i <= item/2; ++i) {
+        if(item % i == 0)
+            queue_enqueue(queue, i);
     }
     return 0;
 }
@@ -118,13 +114,21 @@ void thread_func(const ThreadParams *thread_params)
     mtx_unlock(&mutex);
 
 //    We want half of the threads to be producers for the queue, and half to be consumers of the queue.
-    if(thread_params->id % 2)
-        producer(thread_params->q);
-    else
-        consumer(thread_params->q);
+    handle_single_queue_item(thread_params->q);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    // Check that the correct number of arguments are passed
+    if (argc != 4) {
+        fprintf(stderr, "Usage: %s root_directory search_term num_threads\n", argv[0]);
+        return 1;
+    }
+
+    // Get the root directory, search term, and number of threads from the command line arguments
+    char* root_directory = argv[1];
+    char* search_term = argv[2];
+    number_of_desired_threads = atoi(argv[3]);
+
     Queue q;
     int queue_size = 11;
     queue_init(&q, queue_size);
@@ -155,6 +159,7 @@ int main() {
 //    Trigger all threads!
     cnd_broadcast(&condition);
     mtx_unlock(&mutex);
+    queue_enqueue(&q, 36);
 
     // Wait for all threads to finish
     for (int i = 0; i < number_of_desired_threads; i++) {
