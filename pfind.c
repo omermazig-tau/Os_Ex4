@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <dirent.h>
+#include <limits.h>
 
 
 mtx_t mutex;
