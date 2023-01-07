@@ -53,6 +53,9 @@ int queue_init(Queue *q, size_t capacity) {
 int queue_free(Queue *q) {
     mtx_destroy(&q->lock);
     cnd_destroy(&q->cond);
+    for (size_t i = 0; i < q->size; i++) {
+        free(q->arr[i]);
+    }
     free(q->arr);
     return 0;
 }
@@ -105,13 +108,14 @@ Path queue_dequeue(Queue *q) {
             number_of_waiting_threads--;
         }
     }
-    Path item = q->arr[q->front];
+    Path item = strdup(q->arr[q->front]);
+    free(q->arr[q->front]);
     q->size--;
 //    Update front after the dequeueing. Circular queue - So if we remove from the start of `arr`, new front is end of `arr`
     q->front = (q->front + 1) % q->capacity;
     cnd_signal(&q->cond);
     mtx_unlock(&q->lock);
-    return strdup(item);
+    return item;
 }
 
 bool is_directory_searchable(DirPath dir_path) {
@@ -186,6 +190,7 @@ int handle_single_path_item(Queue *arg) {
                 printf("%s\n", item);
             }
         }
+        free(item);
     }
 }
 
@@ -226,7 +231,7 @@ int main(int argc, char *argv[]) {
     }
 
     Queue q;
-    int queue_size = 1000000;
+    int queue_size = 100000;
     if(queue_init(&q, queue_size) != 0){
         fprintf(stderr, "Couldn't allocate memory for a queue of size %d\n", queue_size);
         return 1;
@@ -269,5 +274,6 @@ int main(int argc, char *argv[]) {
     mtx_destroy(&mutex);
     cnd_destroy(&condition);
     cnd_destroy(&is_all_threads_ready);
+    queue_free(&q);
     return is_any_errors;
 }
