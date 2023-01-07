@@ -110,13 +110,7 @@ bool is_directory_searchable(DirPath dir_path) {
     return access(dir_path, R_OK | X_OK) == 0;
 }
 
-bool is_directory(Path path) {
-    struct stat s;
-    if (stat(path, &s) != 0) {
-        fprintf(stderr, "Error: stat action on path failed.\n");
-        return false;
-    }
-
+bool is_directory(struct stat s) {
     // Check if the file at the given path is a directory
     if (S_ISDIR(s.st_mode)) {
         return true;
@@ -158,13 +152,18 @@ void process_directory(Path dir_path, Queue *q) {
     closedir(dir);
 }
 
-int handle_single_path_item(const Queue *arg) {
-    const Queue *queue = arg;
+int handle_single_path_item(Queue *arg) {
+    Queue *queue = arg;
     Path item;
 //    TODO - This is bad. try to avoid while true.
     while (true) {
         item = queue_dequeue(queue);
-        if (is_directory(item)) {
+        struct stat s;
+        if (stat(item, &s) != 0) {
+            fprintf(stderr, "Error: stat action on path %s failed.\n", item);
+            is_any_errors = true;
+        }
+        else if (is_directory(s)) {
             if (is_directory_searchable(item)) {
                 process_directory(item, queue);
             } else {
@@ -181,7 +180,7 @@ int handle_single_path_item(const Queue *arg) {
     }
 }
 
-void thread_func(const Queue *q) {
+void thread_func(Queue *q) {
     mtx_lock(&mutex);
     if (++number_of_ready_threads == number_of_desired_threads) {
         // If we reached here, that means that this is the last thread to reach here, so we signal to main that he should trigger all the waiting threads
@@ -207,14 +206,22 @@ int main(int argc, char *argv[]) {
     search_term = argv[2];
     number_of_desired_threads = atoi(argv[3]); // NOLINT(cert-err34-c)
 
-    if (is_directory(root_directory) && !is_directory_searchable(root_directory)) {
+    struct stat s;
+    if (stat(root_directory, &s) != 0) {
+        fprintf(stderr, "Error: stat action on path %s failed.\n", root_directory);
+        return 1;
+    }
+    if (is_directory(s) && !is_directory_searchable(root_directory)) {
         fprintf(stderr, "Unsearchable root directory %s\n", root_directory);
         return 1;
     }
 
     Queue q;
-    int queue_size = 10000;
-    queue_init(&q, queue_size);
+    int queue_size = 1000000;
+    if(queue_init(&q, queue_size) != 0){
+        fprintf(stderr, "Couldn't allocate memory for a queue of size %d\n", queue_size);
+        return 1;
+    }
 
     thrd_t threads[number_of_desired_threads];
 
