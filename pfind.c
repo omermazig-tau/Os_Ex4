@@ -184,7 +184,6 @@ int handle_single_path_item(Queue *arg) {
             }
         }
     }
-    return 0;
 }
 
 void thread_func(const ThreadParams *thread_params) {
@@ -211,7 +210,7 @@ int main(int argc, char *argv[]) {
     // Get the root directory, search term, and number of threads from the command line arguments
     Path root_directory = argv[1];
     search_term = argv[2];
-    number_of_desired_threads = atoi(argv[3]);
+    number_of_desired_threads = atoi(argv[3]); // NOLINT(cert-err34-c)
 
     if (is_directory(root_directory) && !is_directory_searchable(root_directory)) {
         fprintf(stderr, "Unsearchable root directory %s\n", root_directory);
