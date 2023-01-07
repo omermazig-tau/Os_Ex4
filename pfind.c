@@ -91,7 +91,6 @@ Path queue_dequeue(Queue* q) {
 //        waiting, and because the queue is empty, that means I'm going to be waiting too, for no one. So we are done.
         if(waiting_threads == number_of_desired_threads) {
             printf("Done searching, found %lu files\n", files_found);
-            queue_free(q);
             exit(is_any_errors);
         }
         cnd_wait(&q->cond, &q->lock);
@@ -191,7 +190,6 @@ int handle_single_path_item(Queue *arg) {
 void thread_func(const ThreadParams *thread_params)
 {
     mtx_lock(&mutex);
-    printf("Created thread %d!\n", thread_params->id);
     if(++number_of_ready_threads == number_of_desired_threads) {
         // If we reached here, that means that this is the last thread to reach here, so we signal to main that he should trigger all the waiting threads
         cnd_signal(&is_all_threads_ready);
@@ -215,6 +213,11 @@ int main(int argc, char* argv[]) {
     Path root_directory = argv[1];
     search_term = argv[2];
     number_of_desired_threads = atoi(argv[3]);
+
+    if(is_directory(root_directory) && !is_directory_searchable(root_directory)) {
+        fprintf(stderr, "Unsearchable root directory %s\n", root_directory);
+        return 1;
+    }
 
     Queue q;
     int queue_size = 1000;
@@ -264,6 +267,5 @@ int main(int argc, char* argv[]) {
     mtx_destroy(&mutex);
     cnd_destroy(&condition);
     cnd_destroy(&is_all_threads_ready);
-    queue_free(&q);
     return is_any_errors;
 }
