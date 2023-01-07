@@ -1,7 +1,9 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <threads.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 
 mtx_t mutex;
@@ -10,9 +12,9 @@ cnd_t is_all_threads_ready;
 long number_of_ready_threads = 0;
 long number_of_desired_threads;
 
-
+typedef char* Path;
 typedef struct queue {
-    int* arr;
+    Path* arr;
     size_t size;
     size_t capacity;
     size_t front;
@@ -22,7 +24,7 @@ typedef struct queue {
 } Queue;
 
 int queue_init(Queue* q, size_t capacity) {
-    q->arr = malloc(capacity * sizeof(int));
+    q->arr = malloc(capacity * sizeof(Path));
     if (q->arr == NULL) {
         return -1;
     }
@@ -47,7 +49,7 @@ int queue_is_full(Queue* q) {
     return is_full;
 }
 
-int queue_enqueue(Queue* q, int item) {
+int queue_enqueue(Queue* q, Path item) {
     mtx_lock(&q->lock);
 //    Wait for queue to not be full, and insert a new item
     while (queue_is_full(q)) {
@@ -62,13 +64,13 @@ int queue_enqueue(Queue* q, int item) {
     return 0;
 }
 
-int queue_dequeue(Queue* q) {
+Path queue_dequeue(Queue* q) {
     mtx_lock(&q->lock);
 //    Wait for queue to not be empty, and insert a new item
     while (queue_is_empty(q)) {
         cnd_wait(&q->cond, &q->lock);
     }
-    int item = q->arr[q->front];
+    Path item = q->arr[q->front];
     q->size--;
 //    Update front after the dequeueing. Circular queue - So if we remove from the start of `arr`, new front is end of `arr`
     q->front = (q->front + 1) % q->capacity;
@@ -91,13 +93,11 @@ typedef struct thread_parameters {
 
 int handle_single_queue_item(Queue *arg) {
     Queue* queue = arg;
-    int item;
+    Path item;
     item = queue_dequeue(queue);
-    printf("Someone got %d from the queue\n", item);
-    for (int i = 2; i <= item/2; ++i) {
-        if(item % i == 0)
-            queue_enqueue(queue, i);
-    }
+    printf("Someone got %s from the queue\n", item);
+//    TODO - While loop where the thread enqueues all folder under item, and searches all files under item
+//    TODO - Implement an exit condition (all threads are waiting on an empty queue
     return 0;
 }
 
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Get the root directory, search term, and number of threads from the command line arguments
-    char* root_directory = argv[1];
+    Path root_directory = argv[1];
     char* search_term = argv[2];
     number_of_desired_threads = atoi(argv[3]);
 
@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
 //    Trigger all threads!
     cnd_broadcast(&condition);
     mtx_unlock(&mutex);
-    queue_enqueue(&q, 36);
+    queue_enqueue(&q, root_directory);
 
     // Wait for all threads to finish
     for (int i = 0; i < number_of_desired_threads; i++) {
