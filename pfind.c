@@ -48,6 +48,13 @@ int queue_init(Queue* q, size_t capacity) {
     return 0;
 }
 
+int queue_free(Queue* q) {
+    mtx_destroy(&q->lock);
+    cnd_destroy(&q->cond);
+    free(q->arr);
+    return 0;
+}
+
 int queue_is_empty(Queue* q) {
     int is_empty = q->size == 0;
     return is_empty;
@@ -84,6 +91,7 @@ Path queue_dequeue(Queue* q) {
 //        waiting, and because the queue is empty, that means I'm going to be waiting too, for no one. So we are done.
         if(waiting_threads == number_of_desired_threads) {
             printf("Done searching, found %lu files\n", files_found);
+            queue_free(q);
             exit(is_any_errors);
         }
         cnd_wait(&q->cond, &q->lock);
@@ -96,13 +104,6 @@ Path queue_dequeue(Queue* q) {
     cnd_signal(&q->cond);
     mtx_unlock(&q->lock);
     return strdup(item);
-}
-
-int queue_free(Queue* q) {
-    mtx_destroy(&q->lock);
-    cnd_destroy(&q->cond);
-    free(q->arr);
-    return 0;
 }
 
 bool is_directory_searchable(DirPath dir_path){
