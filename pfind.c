@@ -4,15 +4,23 @@
 #include <threads.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <string.h>
+#include <stdatomic.h>
 
 
 mtx_t mutex;
 cnd_t condition;
 cnd_t is_all_threads_ready;
+atomic_long files_found = 0;
+atomic_long waiting_threads = 0;
+bool is_any_errors  = false;
 long number_of_ready_threads = 0;
 long number_of_desired_threads;
+char* search_term;
 
 typedef char* Path;
+typedef char* DirPath;
+typedef char* FilePath;
 typedef struct queue {
     Path* arr;
     size_t size;
@@ -68,7 +76,15 @@ Path queue_dequeue(Queue* q) {
     mtx_lock(&q->lock);
 //    Wait for queue to not be empty, and insert a new item
     while (queue_is_empty(q)) {
+//        TODO - See if this logic is optimal
+        waiting_threads++;
+//        If the number of waiting threads is `number_of_desired_threads`, that means that every thread got to
+//        waiting_threads++, But no thread got to waiting_threads--. This means that all thread except this one are
+//        waiting, and because the queue is empty, that means I'm going to be waiting too, for no one. So we are done.
+        if(waiting_threads == number_of_desired_threads)
+            exit(is_any_errors);
         cnd_wait(&q->cond, &q->lock);
+        waiting_threads--;
     }
     Path item = q->arr[q->front];
     q->size--;
@@ -86,18 +102,67 @@ int queue_free(Queue* q) {
     return 0;
 }
 
+bool is_directory_searchable(DirPath dir_path){
+    // Check if the running process has both read and execute permissions for the directory
+    return access(dir_path, R_OK | X_OK) == 0;
+}
+
+bool is_directory(Path path){
+    struct stat s;
+    if (stat(path, &s) != 0) {
+        fprintf(stderr, "Error: stat action on path failed.\n");
+        return false;
+    }
+
+    // Check if the file at the given path is a directory
+    if (S_ISDIR(s.st_mode)) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool is_file_match(FilePath path){
+    // Extract the basename of the file from the path
+    char *base = path;
+    char *last_slash = strrchr(path, '/');
+    if (last_slash != NULL) {
+        base = last_slash + 1;
+    }
+
+    // Check if the basename contains the search string
+    return strstr(base, search_term) != NULL;
+}
+
+void process_directory(Path dir_path) {
+//    TODO - fill
+}
+
 typedef struct thread_parameters {
     int id;
     Queue* q;
 } ThreadParams;
 
-int handle_single_queue_item(Queue *arg) {
+int handle_single_path_item(Queue *arg) {
     Queue* queue = arg;
     Path item;
-    item = queue_dequeue(queue);
-    printf("Someone got %s from the queue\n", item);
-//    TODO - While loop where the thread enqueues all folder under item, and searches all files under item
-//    TODO - Implement an exit condition (all threads are waiting on an empty queue
+//    TODO - This is bad. try to avoid while true.
+    while(true) {
+        item = queue_dequeue(queue);
+        printf("Someone got %s from the queue\n", item);
+        if (is_directory(item)) {
+            if (is_directory_searchable(item)) {
+                process_directory(item);
+            } else {
+                fprintf(stderr, "Directory %s: Permission denied.\n", item);
+                is_any_errors = true;
+            }
+        } else {
+            if (is_file_match(item)) {
+                files_found++;
+            }
+        }
+    }
     return 0;
 }
 
@@ -114,7 +179,7 @@ void thread_func(const ThreadParams *thread_params)
     mtx_unlock(&mutex);
 
 //    We want half of the threads to be producers for the queue, and half to be consumers of the queue.
-    handle_single_queue_item(thread_params->q);
+    handle_single_path_item(thread_params->q);
 }
 
 int main(int argc, char* argv[]) {
@@ -126,7 +191,7 @@ int main(int argc, char* argv[]) {
 
     // Get the root directory, search term, and number of threads from the command line arguments
     Path root_directory = argv[1];
-    char* search_term = argv[2];
+    search_term = argv[2];
     number_of_desired_threads = atoi(argv[3]);
 
     Queue q;
@@ -148,7 +213,7 @@ int main(int argc, char* argv[]) {
         thread_params->q = &q;
 
         if (thrd_create(&threads[i], (thrd_start_t) thread_func, thread_params) != thrd_success) {
-            printf("Error creating thread\n");
+            fprintf(stderr, "Error creating thread\n");
             return -1;
         }
     }
@@ -178,5 +243,5 @@ int main(int argc, char* argv[]) {
     cnd_destroy(&condition);
     cnd_destroy(&is_all_threads_ready);
     queue_free(&q);
-    return 0;
+    return is_any_errors;
 }
