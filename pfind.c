@@ -13,8 +13,9 @@
 mtx_t mutex;
 cnd_t condition;
 cnd_t is_all_threads_ready;
-atomic_long files_found = 0;
-atomic_long waiting_threads = 0;
+atomic_long number_of_files_found = 0;
+atomic_long number_of_waiting_threads = 0;
+atomic_long number_of_running_threads = 0;
 bool is_any_errors = false;
 long number_of_ready_threads = 0;
 long number_of_desired_threads;
@@ -85,17 +86,24 @@ Path queue_dequeue(Queue *q) {
     mtx_lock(&q->lock);
 //    Wait for queue to not be empty, and insert a new item
     while (queue_is_empty(q)) {
-//        TODO - See if this logic is optimal
-        waiting_threads++;
-//        If the number of waiting threads is `number_of_desired_threads`, that means that every thread got to
-//        waiting_threads++, But no thread got to waiting_threads--. This means that all thread except this one are
+//        If the number of waiting threads is `number_of_desired_threads` - 1, that means that every thread got to
+//        number_of_waiting_threads++, But no thread got to number_of_waiting_threads--. This means that all thread except this one are
 //        waiting, and because the queue is empty, that means I'm going to be waiting too, for no one. So we are done.
-        if (waiting_threads == number_of_desired_threads) {
-            printf("Done searching, found %lu files\n", files_found);
-            exit(is_any_errors);
+        if (number_of_waiting_threads == number_of_running_threads - 1) {
+            number_of_running_threads--;
+//            This will cause the one thread to come out of the wait, loop back to this if scope (because the queue is
+//            still empty), and enter here too (because both `number_of_waiting_threads` and `number_of_running_threads`
+//            were decreased by 1). and so on and so on...
+            cnd_signal(&q->cond);
+            mtx_unlock(&q->lock);
+            thrd_exit(is_any_errors);
         }
-        cnd_wait(&q->cond, &q->lock);
-        waiting_threads--;
+        else{
+//            We should still run, so we wait for something for the queue to be released
+            number_of_waiting_threads++;
+            cnd_wait(&q->cond, &q->lock);
+            number_of_waiting_threads--;
+        }
     }
     Path item = q->arr[q->front];
     q->size--;
@@ -174,7 +182,7 @@ int handle_single_path_item(Queue *arg) {
         } else {
 //            It's a file
             if (is_file_match(item)) {
-                files_found++;
+                number_of_files_found++;
                 printf("%s\n", item);
             }
         }
@@ -237,6 +245,9 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error creating thread %d\n", i);
             return 1;
         }
+        else{
+            number_of_running_threads++;
+        }
     }
 
     mtx_lock(&mutex);
@@ -251,13 +262,8 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < number_of_desired_threads; i++) {
         thrd_join(threads[i], NULL);
     }
-
-//    Print experiment result
-    printf("All threads has finished!\n");
-    if (queue_is_empty(&q))
-        printf("Queue is empty!!!\n");
-    else
-        printf("Queue is not empty!!!\n");
+//    Print conclusion
+    printf("Done searching, found %lu files\n", number_of_files_found);
 
 //    Cleanup
     mtx_destroy(&mutex);
