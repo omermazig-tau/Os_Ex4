@@ -158,13 +158,8 @@ void process_directory(Path dir_path, Queue *q) {
     closedir(dir);
 }
 
-typedef struct thread_parameters {
-    int id;
-    Queue *q;
-} ThreadParams;
-
-int handle_single_path_item(Queue *arg) {
-    Queue *queue = arg;
+int handle_single_path_item(const Queue *arg) {
+    const Queue *queue = arg;
     Path item;
 //    TODO - This is bad. try to avoid while true.
     while (true) {
@@ -186,7 +181,7 @@ int handle_single_path_item(Queue *arg) {
     }
 }
 
-void thread_func(const ThreadParams *thread_params) {
+void thread_func(const Queue *q) {
     mtx_lock(&mutex);
     if (++number_of_ready_threads == number_of_desired_threads) {
         // If we reached here, that means that this is the last thread to reach here, so we signal to main that he should trigger all the waiting threads
@@ -197,7 +192,7 @@ void thread_func(const ThreadParams *thread_params) {
     mtx_unlock(&mutex);
 
 //    We want half of the threads to be producers for the queue, and half to be consumers of the queue.
-    handle_single_path_item(thread_params->q);
+    handle_single_path_item(q);
 }
 
 int main(int argc, char *argv[]) {
@@ -218,7 +213,7 @@ int main(int argc, char *argv[]) {
     }
 
     Queue q;
-    int queue_size = 1000;
+    int queue_size = 10000;
     queue_init(&q, queue_size);
 
     thrd_t threads[number_of_desired_threads];
@@ -230,12 +225,7 @@ int main(int argc, char *argv[]) {
 
     // Create `number_of_desired_threads` threads
     for (int i = 0; i < number_of_desired_threads; i++) {
-//        Creating an "object" with params we want to  pass to threads
-        ThreadParams *thread_params = malloc(sizeof(ThreadParams));
-        thread_params->id = i;
-        thread_params->q = &q;
-
-        if (thrd_create(&threads[i], (thrd_start_t) thread_func, thread_params) != thrd_success) {
+        if (thrd_create(&threads[i], (thrd_start_t) thread_func, &q) != thrd_success) {
             fprintf(stderr, "Error creating thread %d\n", i);
             return 1;
         }
